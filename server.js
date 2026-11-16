@@ -12,11 +12,15 @@ console.log("DEBUG: MAIL_PASS is", process.env.MAIL_PASS ? "LOADED" : "MISSING")
 require("./models/mongoConnection"); // your MongoDB connection
 
 const PORT = process.env.PORT || 5000;
+const allowedOrigins = [
+  process.env.CLIENT_URL || process.env.RENDER_EXTERNAL_URL,
+  ...(process.env.NODE_ENV === "production" ? [] : ["http://localhost:3000"]),
+].filter(Boolean);
 
 // Middlewares
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
-app.use(cors({ origin: "http://localhost:3000" }));
+app.use(cors({ origin: allowedOrigins }));
 app.use(morgan("dev"));
 
 // Routes
@@ -28,20 +32,11 @@ app.use("/api", require("./routes/imgLocRoutes"));       // Local image upload
 app.use("/images", express.static(path.join(__dirname, "client/public/images")));
 app.use("/api", require("./routes/pushRoutes"));         // Push subscriptions
 app.use("/posts", require("./routes/postRoutes"));       // Community Feed
+app.use("/chats", require("./routes/chatRoutes"));
 
 // Start Scheduler
 const { startScheduler } = require("./cron/scheduler");
 startScheduler();
-
-// Optional root route
-app.get("/", (req, res) => {
-  res.send("Backend is running!");
-});
-
-// Safety: Redirect mistakes to frontend
-app.get(['/profile/*', '/community', '/login', '/register', '/home'], (req, res) => {
-  res.redirect(`http://localhost:3000${req.originalUrl}`);
-});
 
 // Serve frontend in production
 if (process.env.NODE_ENV === "production") {
@@ -49,14 +44,16 @@ if (process.env.NODE_ENV === "production") {
   app.get("*", (req, res) => {
     res.sendFile(path.join(__dirname, "client", "build", "index.html"));
   });
+} else {
+  app.get("/", (req, res) => {
+    res.send("Backend is running!");
+  });
 }
-
-app.use("/chats", require("./routes/chatRoutes"));
 
 // Socket.io setup
 const server = http.createServer(app);
 const io = socketIo(server, {
-  cors: { origin: "http://localhost:3000" }
+  cors: { origin: allowedOrigins }
 });
 
 const Chat = require("./models/chatModel");

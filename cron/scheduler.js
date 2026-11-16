@@ -103,7 +103,7 @@ const checkReminders = async () => {
                     const payload = JSON.stringify({
                         title: `Reminder: ${rem.Title}`,
                         body: `It's time for ${pet.PetName}'s reminder! ${rem.Note || ''}`,
-                        icon: "http://localhost:5000/images/paw_logo.PNG", // Generic bell or pet icon
+                        icon: `${process.env.SERVER_URL || process.env.RENDER_EXTERNAL_URL || "http://localhost:5000"}/images/paw_logo.PNG`,
                     });
 
                     for (const sub of subscriptions) {

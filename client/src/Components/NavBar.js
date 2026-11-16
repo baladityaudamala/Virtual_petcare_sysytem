@@ -52,7 +52,9 @@ const NavBar = () => {
 	useEffect(() => {
 		if (userData.user) {
 			// Setup Socket
-			const newSocket = require("socket.io-client")("http://localhost:5000");
+			const newSocket = require("socket.io-client")(
+				process.env.NODE_ENV === "production" ? undefined : "http://localhost:5000"
+			);
 			newSocket.emit("setup", userData.user);
 			newSocket.on("notification", () => {
 				setUnreadCount(prev => prev + 1);

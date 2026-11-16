@@ -17,7 +17,7 @@ const Chat = () => {
 
     // Initialize Socket & Load Chats
     useEffect(() => {
-        socket = io("http://localhost:5000");
+        socket = io(process.env.NODE_ENV === "production" ? undefined : "http://localhost:5000");
 
         const fetchChats = async () => {
             try {

@@ -57,7 +57,8 @@ module.exports = {
         },
       });
 
-      const url = `http://localhost:5000/confirm/verify/${token.token}`;
+      const baseUrl = process.env.SERVER_URL || process.env.RENDER_EXTERNAL_URL || "http://localhost:5000";
+      const url = `${baseUrl}/confirm/verify/${token.token}`;
 
       await transporter.sendMail({
         from: process.env.MAIL_USER,
@@ -162,7 +163,8 @@ module.exports = {
       });
 
       // Point to frontend reset page
-      const url = `http://localhost:3000/reset-password/${token.token}`;
+      const baseUrl = process.env.CLIENT_URL || process.env.RENDER_EXTERNAL_URL || "http://localhost:3000";
+      const url = `${baseUrl}/reset-password/${token.token}`;
 
       await transporter.sendMail({
         from: process.env.MAIL_USER,
