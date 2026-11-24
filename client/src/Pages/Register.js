@@ -59,8 +59,8 @@ const Register = () => {
 				displayName, // Sent to satisfy older/stale server code expecting this field
 			};
 
-			await axios.post("/users/register", newUser);
-			toast.success("Registration successful! Please verify email and login.");
+			const { data } = await axios.post("/users/register", newUser);
+			toast.success(data.msg || "Registration successful! Please verify your email.");
 			navigate("/login");
 		} catch (err) {
 			const msg = err.response?.data?.msg || "Registration failed. Please try again.";

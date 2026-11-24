@@ -22,11 +22,12 @@ const PORT = process.env.PORT || 5000;
 
 // Allowed frontend origins
 const allowedOrigins = [
-  process.env.CLIENT_URL,
-  ...(process.env.NODE_ENV !== "production"
-    ? ["http://localhost:3000"]
-    : []),
-].filter(Boolean);
+  ...(process.env.CLIENT_URL || "")
+    .split(",")
+    .map((origin) => origin.trim().replace(/\/+$/, ""))
+    .filter(Boolean),
+  ...(process.env.NODE_ENV !== "production" ? ["http://localhost:3000"] : []),
+];
 
 // Middlewares
 app.use(express.json({ limit: "50mb" }));
