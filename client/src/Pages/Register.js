@@ -60,7 +60,7 @@ const Register = () => {
 			};
 
 			await axios.post("/users/register", newUser);
-			toast.success("Registration successful! Please login.");
+			toast.success("Registration successful! Please verify email and login.");
 			navigate("/login");
 		} catch (err) {
 			const msg = err.response?.data?.msg || "Registration failed. Please try again.";

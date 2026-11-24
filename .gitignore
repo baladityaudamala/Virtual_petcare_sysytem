@@ -2,3 +2,14 @@ node_modules
 .DS_Store
 /*.env
 .heroku
+
+# Local credentials and user data
+.env
+.env.*
+**/.env
+**/.env.*
+/vapid.json
+/users_list.json
+
+client/build/
+.DS_Store

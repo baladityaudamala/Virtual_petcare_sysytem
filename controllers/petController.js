@@ -1,19 +1,98 @@
-// controllers/petController.js
-const Pet = require("../models/pets");
+// controllers/petController.js — Sequelize/MySQL implementation
+// Uses Sequelize CRUD on separate normalized tables.
+// API response shape remains compatible with the frontend.
+
+const { Pet, VetVisit, Medication, Vaccination, Reminder, Activity, Expense } = require("../models/index");
+
+// Helper: include all sub-tables when fetching a pet.
+const PET_INCLUDE = [
+  { model: VetVisit,    as: "VetVisits"    },
+  { model: Medication,  as: "Medications"  },
+  { model: Vaccination, as: "Vaccinations" },
+  { model: Reminder,    as: "Reminders"    },
+  { model: Activity,    as: "Activities"   },
+  { model: Expense,     as: "Expenses"     },
+];
+
+// Helper: convert Sequelize pet instance to the JSON shape the frontend expects
+// (adds _id alias for id so old frontend references to pet._id still work)
+function serializePet(pet) {
+  const p = pet.toJSON ? pet.toJSON() : pet;
+  p._id = p.id;
+  p.PetName = p.petName;
+  p.BirthDate = p.birthDate;
+  p.PetImageLoc = p.petImageLoc;
+  if (typeof p.PetImageLoc === "string") {
+    p.PetImageLoc = p.PetImageLoc.replace(/^\.\//, "/");
+  }
+  p.petImageLoc = p.PetImageLoc;
+  p.Gender = p.gender;
+  p.TypeOfPet = p.typeOfPet;
+  p.Breed = p.breed;
+  p.ParentID = p.parentId;
+  if (p.VetVisits) p.VetVisits = p.VetVisits.map(v => ({
+    ...v,
+    _id: v.id,
+    VisitDate: v.visitDate,
+    VisitNotes: v.visitNotes,
+    Weight: v.weight,
+  }));
+  if (p.Medications) p.Medications = p.Medications.map(m => ({
+    ...m,
+    _id: m.id,
+    MedicationName: m.medicationName,
+    DueDate: m.dueDate,
+    Dose: m.dose,
+    Time: m.time,
+  }));
+  if (p.Vaccinations) p.Vaccinations = p.Vaccinations.map(v => ({
+    ...v,
+    _id: v.id,
+    Name: v.name,
+    DateAdministered: v.dateAdministered,
+    NextDueDate: v.nextDueDate,
+  }));
+  if (p.Reminders) p.Reminders = p.Reminders.map(r => ({
+    ...r,
+    _id: r.id,
+    Date: r.date,
+    Title: r.title,
+    Note: r.note,
+    Frequency: r.frequency,
+    SelectedDays: r.selectedDays,
+  }));
+  if (p.Activities) p.Activities = p.Activities.map(a => ({
+    ...a,
+    _id: a.id,
+    ActivityType: a.activityType,
+    Duration: a.duration,
+    Date: a.date,
+    Notes: a.notes,
+  }));
+  if (p.Expenses) p.Expenses = p.Expenses.map(e => ({
+    ...e,
+    _id: e.id,
+    Category: e.category,
+    Amount: e.amount,
+    Date: e.date,
+    Description: e.description,
+  }));
+  return p;
+}
 
 function getUserIdFromReq(req) {
-  // Many auth middlewares either set req.user = id or req.user = { id: ... }
-  if (!req.user) return null;
-  if (typeof req.user === "string") return req.user;
+  if (req.user === undefined || req.user === null) return null;
+  if (typeof req.user === "number" || typeof req.user === "string") return req.user;
   if (typeof req.user === "object") return req.user.id || req.user._id || null;
   return null;
 }
 
 module.exports = {
+  // ─── PETS ──────────────────────────────────────────────────────────────────
   getPets: async (req, res) => {
     try {
-      const dbPets = await Pet.find({});
-      return res.json(dbPets);
+      const dbPets = await Pet.findAll({ include: PET_INCLUDE });
+      return res.json(dbPets.map(serializePet));
     } catch (err) {
       console.error("getPets error:", err);
       return res.status(500).json({ error: "Failed to fetch pets" });
@@ -23,46 +102,16 @@ module.exports = {
   getPetsByUser: async (req, res) => {
     try {
       const userId = req.params.id || getUserIdFromReq(req);
-      if (!userId) {
-        return res.status(400).json({ error: "Missing user id" });
-      }
-      const dbPets = await Pet.find({ ParentID: userId });
-      return res.json(dbPets);
+      if (!userId) return res.status(400).json({ error: "Missing user id" });
+
+      const dbPets = await Pet.findAll({
+        where: { parentId: userId },
+        include: PET_INCLUDE,
+      });
+      return res.json(dbPets.map(serializePet));
     } catch (err) {
       console.error("getPetsByUser error:", err);
       return res.status(500).json({ error: "Failed to fetch pets for user" });
-    }
-  },
-
-  delPet: async (req, res) => {
-    try {
-      const id = req.params.id;
-      if (!id) return res.status(400).json({ error: "Missing pet id" });
-
-      const deleted = await Pet.findByIdAndDelete(id);
-      if (!deleted) return res.status(404).json({ error: "Pet not found" });
-
-      return res.json({ message: "Pet deleted", pet: deleted });
-    } catch (err) {
-      console.error("delPet error:", err);
-      return res.status(500).json({ error: "Failed to delete pet" });
-    }
-  },
-
-  updatePet: async (req, res) => {
-    try {
-      const id = req.params.id;
-      if (!id) return res.status(400).json({ error: "Missing pet id" });
-
-      const updated = await Pet.findOneAndUpdate({ _id: id }, req.body, {
-        new: true,
-      });
-      if (!updated) return res.status(404).json({ error: "Pet not found" });
-
-      return res.json(updated);
-    } catch (err) {
-      console.error("updatePet error:", err);
-      return res.status(500).json({ error: "Failed to update pet" });
     }
   },
 
@@ -71,10 +120,10 @@ module.exports = {
       const id = req.params.id;
       if (!id) return res.status(400).json({ error: "Missing pet id" });
 
-      const pet = await Pet.findById(id);
+      const pet = await Pet.findByPk(id, { include: PET_INCLUDE });
       if (!pet) return res.status(404).json({ error: "Pet not found" });
 
-      return res.json(pet);
+      return res.json(serializePet(pet));
     } catch (err) {
       console.error("getPetByID error:", err);
       return res.status(500).json({ error: "Failed to fetch pet" });
@@ -84,194 +133,204 @@ module.exports = {
   createPet: async (req, res) => {
     try {
       const parentId = getUserIdFromReq(req);
-      if (!parentId) {
-        // If you expect clients to send ParentID in body when no auth used:
-        // const parentFromBody = req.body.ParentID;
-        // if (!parentFromBody) return res.status(400).json({ error: 'Missing parent id' });
-        return res.status(401).json({ error: "Unauthorized: missing user" });
-      }
+      if (!parentId) return res.status(401).json({ error: "Unauthorized: missing user" });
 
-      const newPet = new Pet({
-        PetName: req.body.PetName,
-        BirthDate: req.body.BirthDate,
-        PetImageLoc: req.body.PetImageLoc,
-        Gender: req.body.Gender,
-        TypeOfPet: req.body.TypeOfPet,
-        Breed: req.body.Breed,
-        ParentID: parentId,
+      const pet = await Pet.create({
+        petName:    req.body.PetName,
+        birthDate:  req.body.BirthDate,
+        petImageLoc: req.body.PetImageLoc,
+        gender:     req.body.Gender,
+        typeOfPet:  req.body.TypeOfPet,
+        breed:      req.body.Breed,
+        parentId,
       });
 
-      const saved = await newPet.save();
-      return res.status(201).json(saved);
+      // Fetch with includes so response has all sub-arrays (empty)
+      const full = await Pet.findByPk(pet.id, { include: PET_INCLUDE });
+      return res.status(201).json(serializePet(full));
     } catch (err) {
       console.error("createPet error:", err);
       return res.status(500).json({ error: "Failed to create pet" });
     }
   },
 
-  addPetMed: async (req, res) => {
+  updatePet: async (req, res) => {
     try {
       const id = req.params.id;
       if (!id) return res.status(400).json({ error: "Missing pet id" });
 
-      const data = await Pet.findOneAndUpdate(
-        { _id: id },
-        { $push: { Medications: req.body } },
-        { new: true }
-      );
-      if (!data) return res.status(404).json({ error: "Pet not found" });
+      const pet = await Pet.findByPk(id);
+      if (!pet) return res.status(404).json({ error: "Pet not found" });
 
-      return res.json(data);
+      await pet.update({
+        petName:    req.body.PetName    || pet.petName,
+        birthDate:  req.body.BirthDate  || pet.birthDate,
+        petImageLoc: req.body.PetImageLoc || pet.petImageLoc,
+        gender:     req.body.Gender     || pet.gender,
+        typeOfPet:  req.body.TypeOfPet  || pet.typeOfPet,
+        breed:      req.body.Breed      || pet.breed,
+      });
+
+      const full = await Pet.findByPk(id, { include: PET_INCLUDE });
+      return res.json(serializePet(full));
     } catch (err) {
-      console.error("addPetMed error:", err);
-      return res.status(500).json({ error: "Failed to add medication" });
+      console.error("updatePet error:", err);
+      return res.status(500).json({ error: "Failed to update pet" });
     }
   },
 
-  addPetVisit: async (req, res) => {
+  delPet: async (req, res) => {
     try {
       const id = req.params.id;
       if (!id) return res.status(400).json({ error: "Missing pet id" });
 
-      const data = await Pet.findOneAndUpdate(
-        { _id: id },
-        { $push: { VetVisits: req.body } },
-        { new: true }
-      );
-      if (!data) return res.status(404).json({ error: "Pet not found" });
+      const pet = await Pet.findByPk(id);
+      if (!pet) return res.status(404).json({ error: "Pet not found" });
 
-      return res.json(data);
+      await pet.destroy(); // cascades to all sub-tables
+      return res.json({ message: "Pet deleted", pet: serializePet(pet) });
+    } catch (err) {
+      console.error("delPet error:", err);
+      return res.status(500).json({ error: "Failed to delete pet" });
+    }
+  },
+
+  // ─── VET VISITS ────────────────────────────────────────────────────────────
+  addPetVisit: async (req, res) => {
+    try {
+      const petId = req.params.id;
+      if (!petId) return res.status(400).json({ error: "Missing pet id" });
+
+      await VetVisit.create({ petId, visitDate: req.body.VisitDate, visitNotes: req.body.VisitNotes, weight: req.body.Weight });
+      const pet = await Pet.findByPk(petId, { include: PET_INCLUDE });
+      if (!pet) return res.status(404).json({ error: "Pet not found" });
+      return res.json(serializePet(pet));
     } catch (err) {
       console.error("addPetVisit error:", err);
       return res.status(500).json({ error: "Failed to add visit" });
     }
   },
 
-  updatePetMed: async (req, res) => {
-    try {
-      const petId = req.params.id;
-      const medId = req.params.medid;
-      if (!petId || !medId)
-        return res.status(400).json({ error: "Missing pet id or med id" });
-
-      const dbModel = await Pet.findOneAndUpdate(
-        { _id: petId, "Medications._id": medId },
-        {
-          $set: {
-            "Medications.$.MedicationName": req.body.MedicationName,
-            "Medications.$.DueDate": req.body.DueDate,
-            "Medications.$.Dose": req.body.Dose,
-            "Medications.$.Time": req.body.Time,
-          },
-        },
-        { new: true }
-      );
-
-      if (!dbModel) return res.status(404).json({ error: "Medication not found" });
-      return res.json(dbModel);
-    } catch (err) {
-      console.error("updatePetMed error:", err);
-      return res.status(500).json({ error: "Failed to update medication" });
-    }
-  },
-
-  updatePetVisit: async (req, res) => {
-    try {
-      const petId = req.params.id;
-      const visitId = req.params.visitid;
-      if (!petId || !visitId)
-        return res.status(400).json({ error: "Missing pet id or visit id" });
-
-      const dbModel = await Pet.findOneAndUpdate(
-        { _id: petId, "VetVisits._id": visitId },
-        {
-          $set: {
-            "VetVisits.$.VisitDate": req.body.VisitDate,
-            "VetVisits.$.VisitNotes": req.body.VisitNotes,
-          },
-        },
-        { new: true, upsert: false } // don't upsert into array item
-      );
-
-      if (!dbModel) return res.status(404).json({ error: "Visit not found" });
-      return res.json(dbModel);
-    } catch (err) {
-      console.error("updatePetVisit error:", err);
-      return res.status(500).json({ error: "Failed to update visit" });
-    }
-  },
-
   findPetVisit: async (req, res) => {
     try {
-      const petId = req.params.id;
-      const visitId = req.params.visitid;
-      if (!petId || !visitId)
-        return res.status(400).json({ error: "Missing pet id or visit id" });
+      const { id: petId, visitid } = req.params;
+      if (!petId || !visitid) return res.status(400).json({ error: "Missing pet id or visit id" });
 
-      const dbModel = await Pet.findOne({ _id: petId, "VetVisits._id": visitId });
-      if (!dbModel) return res.status(404).json({ error: "Visit not found" });
-      return res.json(dbModel);
+      const pet = await Pet.findByPk(petId, { include: PET_INCLUDE });
+      if (!pet) return res.status(404).json({ error: "Visit not found" });
+      return res.json(serializePet(pet));
     } catch (err) {
       console.error("findPetVisit error:", err);
       return res.status(500).json({ error: "Failed to find visit" });
     }
   },
 
+  updatePetVisit: async (req, res) => {
+    try {
+      const { id: petId, visitid } = req.params;
+      if (!petId || !visitid) return res.status(400).json({ error: "Missing ids" });
+
+      const visit = await VetVisit.findByPk(visitid);
+      if (!visit) return res.status(404).json({ error: "Visit not found" });
+
+      await visit.update({ visitDate: req.body.VisitDate, visitNotes: req.body.VisitNotes });
+      const pet = await Pet.findByPk(petId, { include: PET_INCLUDE });
+      return res.json(serializePet(pet));
+    } catch (err) {
+      console.error("updatePetVisit error:", err);
+      return res.status(500).json({ error: "Failed to update visit" });
+    }
+  },
+
   delPetVisit: async (req, res) => {
     try {
-      const petId = req.params.id;
-      const visitId = req.params.visitid;
-      if (!petId || !visitId)
-        return res.status(400).json({ error: "Missing pet id or visit id" });
+      const { id: petId, visitid } = req.params;
+      if (!petId || !visitid) return res.status(400).json({ error: "Missing ids" });
 
-      const dbModel = await Pet.findOneAndUpdate(
-        { _id: petId, "VetVisits._id": visitId },
-        { $pull: { VetVisits: { _id: visitId } } },
-        { new: true }
-      );
-
-      if (!dbModel) return res.status(404).json({ error: "Visit not found" });
-      return res.json(dbModel);
+      await VetVisit.destroy({ where: { id: visitid } });
+      const pet = await Pet.findByPk(petId, { include: PET_INCLUDE });
+      if (!pet) return res.status(404).json({ error: "Pet not found" });
+      return res.json(serializePet(pet));
     } catch (err) {
       console.error("delPetVisit error:", err);
       return res.status(500).json({ error: "Failed to delete visit" });
     }
   },
 
-  delPetMed: async (req, res) => {
+  // ─── MEDICATIONS ───────────────────────────────────────────────────────────
+  addPetMed: async (req, res) => {
     try {
       const petId = req.params.id;
-      const medId = req.params.medid;
-      if (!petId || !medId)
-        return res.status(400).json({ error: "Missing pet id or med id" });
+      if (!petId) return res.status(400).json({ error: "Missing pet id" });
 
-      const dbModel = await Pet.findOneAndUpdate(
-        { _id: petId, "Medications._id": medId },
-        { $pull: { Medications: { _id: medId } } },
-        { new: true }
-      );
+      await Medication.create({
+        petId,
+        medicationName: req.body.MedicationName,
+        dueDate: req.body.DueDate,
+        dose: req.body.Dose,
+        time: req.body.Time,
+      });
+      const pet = await Pet.findByPk(petId, { include: PET_INCLUDE });
+      if (!pet) return res.status(404).json({ error: "Pet not found" });
+      return res.json(serializePet(pet));
+    } catch (err) {
+      console.error("addPetMed error:", err);
+      return res.status(500).json({ error: "Failed to add medication" });
+    }
+  },
 
-      if (!dbModel) return res.status(404).json({ error: "Medication not found" });
-      return res.json(dbModel);
+  updatePetMed: async (req, res) => {
+    try {
+      const { id: petId, medid } = req.params;
+      if (!petId || !medid) return res.status(400).json({ error: "Missing ids" });
+
+      const med = await Medication.findByPk(medid);
+      if (!med) return res.status(404).json({ error: "Medication not found" });
+
+      await med.update({
+        medicationName: req.body.MedicationName,
+        dueDate: req.body.DueDate,
+        dose: req.body.Dose,
+        time: req.body.Time,
+      });
+      const pet = await Pet.findByPk(petId, { include: PET_INCLUDE });
+      return res.json(serializePet(pet));
+    } catch (err) {
+      console.error("updatePetMed error:", err);
+      return res.status(500).json({ error: "Failed to update medication" });
+    }
+  },
+
+  delPetMed: async (req, res) => {
+    try {
+      const { id: petId, medid } = req.params;
+      if (!petId || !medid) return res.status(400).json({ error: "Missing ids" });
+
+      await Medication.destroy({ where: { id: medid } });
+      const pet = await Pet.findByPk(petId, { include: PET_INCLUDE });
+      if (!pet) return res.status(404).json({ error: "Pet not found" });
+      return res.json(serializePet(pet));
     } catch (err) {
       console.error("delPetMed error:", err);
       return res.status(500).json({ error: "Failed to delete medication" });
     }
   },
 
+  // ─── VACCINATIONS ──────────────────────────────────────────────────────────
   addPetVaccination: async (req, res) => {
     try {
-      const id = req.params.id;
-      if (!id) return res.status(400).json({ error: "Missing pet id" });
+      const petId = req.params.id;
+      if (!petId) return res.status(400).json({ error: "Missing pet id" });
 
-      const data = await Pet.findOneAndUpdate(
-        { _id: id },
-        { $push: { Vaccinations: req.body } },
-        { new: true }
-      );
-      if (!data) return res.status(404).json({ error: "Pet not found" });
-
-      return res.json(data);
+      await Vaccination.create({
+        petId,
+        name: req.body.Name,
+        dateAdministered: req.body.DateAdministered,
+        nextDueDate: req.body.NextDueDate,
+      });
+      const pet = await Pet.findByPk(petId, { include: PET_INCLUDE });
+      if (!pet) return res.status(404).json({ error: "Pet not found" });
+      return res.json(serializePet(pet));
     } catch (err) {
       console.error("addPetVaccination error:", err);
       return res.status(500).json({ error: "Failed to add vaccination" });
@@ -280,25 +339,19 @@ module.exports = {
 
   updatePetVaccination: async (req, res) => {
     try {
-      const petId = req.params.id;
-      const vaccId = req.params.vaccid;
-      if (!petId || !vaccId)
-        return res.status(400).json({ error: "Missing pet id or vaccination id" });
+      const { id: petId, vaccid } = req.params;
+      if (!petId || !vaccid) return res.status(400).json({ error: "Missing ids" });
 
-      const dbModel = await Pet.findOneAndUpdate(
-        { _id: petId, "Vaccinations._id": vaccId },
-        {
-          $set: {
-            "Vaccinations.$.Name": req.body.Name,
-            "Vaccinations.$.DateAdministered": req.body.DateAdministered,
-            "Vaccinations.$.NextDueDate": req.body.NextDueDate,
-          },
-        },
-        { new: true }
-      );
+      const vacc = await Vaccination.findByPk(vaccid);
+      if (!vacc) return res.status(404).json({ error: "Vaccination not found" });
 
-      if (!dbModel) return res.status(404).json({ error: "Vaccination not found" });
-      return res.json(dbModel);
+      await vacc.update({
+        name: req.body.Name,
+        dateAdministered: req.body.DateAdministered,
+        nextDueDate: req.body.NextDueDate,
+      });
+      const pet = await Pet.findByPk(petId, { include: PET_INCLUDE });
+      return res.json(serializePet(pet));
     } catch (err) {
       console.error("updatePetVaccination error:", err);
       return res.status(500).json({ error: "Failed to update vaccination" });
@@ -307,38 +360,36 @@ module.exports = {
 
   delPetVaccination: async (req, res) => {
     try {
-      const petId = req.params.id;
-      const vaccId = req.params.vaccid;
-      if (!petId || !vaccId)
-        return res.status(400).json({ error: "Missing pet id or vaccination id" });
+      const { id: petId, vaccid } = req.params;
+      if (!petId || !vaccid) return res.status(400).json({ error: "Missing ids" });
 
-      const dbModel = await Pet.findOneAndUpdate(
-        { _id: petId, "Vaccinations._id": vaccId },
-        { $pull: { Vaccinations: { _id: vaccId } } },
-        { new: true }
-      );
-
-      if (!dbModel) return res.status(404).json({ error: "Vaccination not found" });
-      return res.json(dbModel);
+      await Vaccination.destroy({ where: { id: vaccid } });
+      const pet = await Pet.findByPk(petId, { include: PET_INCLUDE });
+      if (!pet) return res.status(404).json({ error: "Pet not found" });
+      return res.json(serializePet(pet));
     } catch (err) {
       console.error("delPetVaccination error:", err);
       return res.status(500).json({ error: "Failed to delete vaccination" });
     }
   },
 
+  // ─── REMINDERS ─────────────────────────────────────────────────────────────
   addPetReminder: async (req, res) => {
     try {
-      const id = req.params.id;
-      if (!id) return res.status(400).json({ error: "Missing pet id" });
+      const petId = req.params.id;
+      if (!petId) return res.status(400).json({ error: "Missing pet id" });
 
-      const data = await Pet.findOneAndUpdate(
-        { _id: id },
-        { $push: { Reminders: req.body } },
-        { new: true }
-      );
-      if (!data) return res.status(404).json({ error: "Pet not found" });
-
-      return res.json(data);
+      await Reminder.create({
+        petId,
+        date: req.body.Date,
+        title: req.body.Title,
+        note: req.body.Note,
+        frequency: req.body.Frequency || "Once",
+        selectedDays: req.body.SelectedDays || [],
+      });
+      const pet = await Pet.findByPk(petId, { include: PET_INCLUDE });
+      if (!pet) return res.status(404).json({ error: "Pet not found" });
+      return res.json(serializePet(pet));
     } catch (err) {
       console.error("addPetReminder error:", err);
       return res.status(500).json({ error: "Failed to add reminder" });
@@ -347,25 +398,19 @@ module.exports = {
 
   updatePetReminder: async (req, res) => {
     try {
-      const petId = req.params.id;
-      const reminderId = req.params.reminderid;
-      if (!petId || !reminderId)
-        return res.status(400).json({ error: "Missing pet id or reminder id" });
+      const { id: petId, reminderid } = req.params;
+      if (!petId || !reminderid) return res.status(400).json({ error: "Missing ids" });
 
-      const dbModel = await Pet.findOneAndUpdate(
-        { _id: petId, "Reminders._id": reminderId },
-        {
-          $set: {
-            "Reminders.$.Date": req.body.Date,
-            "Reminders.$.Title": req.body.Title,
-            "Reminders.$.Note": req.body.Note,
-          },
-        },
-        { new: true }
-      );
+      const reminder = await Reminder.findByPk(reminderid);
+      if (!reminder) return res.status(404).json({ error: "Reminder not found" });
 
-      if (!dbModel) return res.status(404).json({ error: "Reminder not found" });
-      return res.json(dbModel);
+      await reminder.update({
+        date: req.body.Date,
+        title: req.body.Title,
+        note: req.body.Note,
+      });
+      const pet = await Pet.findByPk(petId, { include: PET_INCLUDE });
+      return res.json(serializePet(pet));
     } catch (err) {
       console.error("updatePetReminder error:", err);
       return res.status(500).json({ error: "Failed to update reminder" });
@@ -374,57 +419,57 @@ module.exports = {
 
   delPetReminder: async (req, res) => {
     try {
-      const petId = req.params.id;
-      const reminderId = req.params.reminderid;
-      if (!petId || !reminderId)
-        return res.status(400).json({ error: "Missing pet id or reminder id" });
+      const { id: petId, reminderid } = req.params;
+      if (!petId || !reminderid) return res.status(400).json({ error: "Missing ids" });
 
-      const dbModel = await Pet.findOneAndUpdate(
-        { _id: petId, "Reminders._id": reminderId },
-        { $pull: { Reminders: { _id: reminderId } } },
-        { new: true }
-      );
-
-      if (!dbModel) return res.status(404).json({ error: "Reminder not found" });
-      return res.json(dbModel);
+      await Reminder.destroy({ where: { id: reminderid } });
+      const pet = await Pet.findByPk(petId, { include: PET_INCLUDE });
+      if (!pet) return res.status(404).json({ error: "Pet not found" });
+      return res.json(serializePet(pet));
     } catch (err) {
       console.error("delPetReminder error:", err);
       return res.status(500).json({ error: "Failed to delete reminder" });
     }
   },
 
+  // ─── ACTIVITIES ────────────────────────────────────────────────────────────
   addPetActivity: async (req, res) => {
     try {
-      const id = req.params.id;
-      if (!id) return res.status(400).json({ error: "Missing pet id" });
+      const petId = req.params.id;
+      if (!petId) return res.status(400).json({ error: "Missing pet id" });
 
-      const data = await Pet.findOneAndUpdate(
-        { _id: id },
-        { $push: { Activities: req.body } },
-        { new: true }
-      );
-      if (!data) return res.status(404).json({ error: "Pet not found" });
-
-      return res.json(data);
+      await Activity.create({
+        petId,
+        activityType: req.body.ActivityType,
+        duration: req.body.Duration,
+        date: req.body.Date || new Date(),
+        notes: req.body.Notes,
+      });
+      const pet = await Pet.findByPk(petId, { include: PET_INCLUDE });
+      if (!pet) return res.status(404).json({ error: "Pet not found" });
+      return res.json(serializePet(pet));
     } catch (err) {
       console.error("addPetActivity error:", err);
       return res.status(500).json({ error: "Failed to log activity" });
     }
   },
 
+  // ─── EXPENSES ──────────────────────────────────────────────────────────────
   addPetExpense: async (req, res) => {
     try {
-      const id = req.params.id;
-      if (!id) return res.status(400).json({ error: "Missing pet id" });
+      const petId = req.params.id;
+      if (!petId) return res.status(400).json({ error: "Missing pet id" });
 
-      const data = await Pet.findOneAndUpdate(
-        { _id: id },
-        { $push: { Expenses: req.body } },
-        { new: true }
-      );
-      if (!data) return res.status(404).json({ error: "Pet not found" });
-
-      return res.json(data);
+      await Expense.create({
+        petId,
+        category: req.body.Category,
+        amount: req.body.Amount,
+        date: req.body.Date || new Date(),
+        description: req.body.Description,
+      });
+      const pet = await Pet.findByPk(petId, { include: PET_INCLUDE });
+      if (!pet) return res.status(404).json({ error: "Pet not found" });
+      return res.json(serializePet(pet));
     } catch (err) {
       console.error("addPetExpense error:", err);
       return res.status(500).json({ error: "Failed to log expense" });
@@ -433,17 +478,13 @@ module.exports = {
 
   deletePetExpense: async (req, res) => {
     try {
-      const { id, expenseId } = req.params;
-      if (!id || !expenseId) return res.status(400).json({ error: "Missing required ids" });
+      const { id: petId, expenseId } = req.params;
+      if (!petId || !expenseId) return res.status(400).json({ error: "Missing required ids" });
 
-      const data = await Pet.findOneAndUpdate(
-        { _id: id },
-        { $pull: { Expenses: { _id: expenseId } } },
-        { new: true }
-      );
-
-      if (!data) return res.status(404).json({ error: "Pet not found" });
-      return res.json(data);
+      await Expense.destroy({ where: { id: expenseId } });
+      const pet = await Pet.findByPk(petId, { include: PET_INCLUDE });
+      if (!pet) return res.status(404).json({ error: "Pet not found" });
+      return res.json(serializePet(pet));
     } catch (err) {
       console.error("deletePetExpense error:", err);
       return res.status(500).json({ error: "Failed to delete expense" });

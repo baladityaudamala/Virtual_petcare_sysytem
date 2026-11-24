@@ -1,23 +1,36 @@
-const mongoose = require("mongoose");
+// models/Subscription.js — Sequelize MySQL model
+const { DataTypes } = require("sequelize");
+const sequelize = require("./db");
 
-const subscriptionSchema = new mongoose.Schema({
+const Subscription = sequelize.define(
+  "Subscription",
+  {
+    id: {
+      type: DataTypes.INTEGER,
+      autoIncrement: true,
+      primaryKey: true,
+    },
     userId: {
-        type: String, // Can be used when user is logged in
-        required: false,
+      type: DataTypes.STRING(255),
+      allowNull: true,
     },
     endpoint: {
-        type: String,
-        required: true,
-        unique: true,
+      type: DataTypes.STRING(500),
+      allowNull: false,
+      unique: true,
     },
-    keys: {
-        p256dh: String,
-        auth: String,
+    p256dh: {
+      type: DataTypes.TEXT,
     },
-    createdAt: {
-        type: Date,
-        default: Date.now,
+    auth: {
+      type: DataTypes.TEXT,
     },
-});
+  },
+  {
+    tableName: "subscriptions",
+    timestamps: true,
+    updatedAt: false,
+  }
+);
 
-module.exports = Subscription = mongoose.model("subscription", subscriptionSchema);
+module.exports = Subscription;

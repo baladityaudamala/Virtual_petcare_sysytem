@@ -35,7 +35,7 @@ const Home = () => {
 		try {
 			setPetId(id);
 			localStorage.setItem("petId", id);
-			let thisPet = pets.filter((pet) => pet._id === id);
+			let thisPet = pets.filter((pet) => String(pet._id || pet.id) === String(id));
 			navigate(`/pet/${id}`, { state: { info: thisPet } });
 		} catch {
 			console.log("something wrong");

@@ -17,17 +17,17 @@ const Login = () => {
 	const [showPassword, setShowPassword] = useState(false);
 
 	useEffect(() => {
-		if (userData.user) navigate("/home");
+		if (userData.user) navigate("/home");// Redirect if already logged in
 	}, [userData.user, navigate]);
 
 	const onChange = (e) => {
-		setForm({ ...form, [e.target.name]: e.target.value });
+		setForm({ ...form, [e.target.name]: e.target.value }); // Update form state dynamically based on input name
 	};
 
 	const submit = async (e) => {
 		e.preventDefault();
 		try {
-			const loginRes = await axios.post("/users/login", {
+			const loginRes = await axios.post("/users/login", { //sends login data to backend
 				email: form.email,
 				password: form.password,
 			});
@@ -36,7 +36,7 @@ const Login = () => {
 				token: loginRes.data.token,
 				user: loginRes.data.user,
 			});
-			localStorage.setItem("auth-token", loginRes.data.token);
+			localStorage.setItem("auth-token", loginRes.data.token); // Store token in local storage
 			navigate("/home");
 		} catch (err) {
 			console.log("Login Error:", err);

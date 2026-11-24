@@ -1,3 +1,4 @@
+
 const express = require("express");
 const app = express();
 const path = require("path");
@@ -5,123 +6,234 @@ const http = require("http");
 const socketIo = require("socket.io");
 const cors = require("cors");
 const morgan = require("morgan");
-require("dotenv").config();
-console.log("DEBUG: MAIL_USER is", process.env.MAIL_USER ? "LOADED" : "MISSING");
-console.log("DEBUG: MAIL_PASS is", process.env.MAIL_PASS ? "LOADED" : "MISSING");
 
-require("./models/mongoConnection"); // your MongoDB connection
+require("dotenv").config();
+
+// Database and models
+const {
+  sequelize,
+  Chat,
+  ChatMessage,
+  ChatParticipant,
+  ChatUnreadCount,
+} = require("./models/index");
 
 const PORT = process.env.PORT || 5000;
+
+// Allowed frontend origins
 const allowedOrigins = [
-  process.env.CLIENT_URL || process.env.RENDER_EXTERNAL_URL,
-  ...(process.env.NODE_ENV === "production" ? [] : ["http://localhost:3000"]),
+  process.env.CLIENT_URL,
+  ...(process.env.NODE_ENV !== "production"
+    ? ["http://localhost:3000"]
+    : []),
 ].filter(Boolean);
 
 // Middlewares
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
-app.use(cors({ origin: allowedOrigins }));
+
+app.use(
+  cors({
+    origin: allowedOrigins,
+    credentials: true,
+  })
+);
+
 app.use(morgan("dev"));
 
-// Routes
-app.use("/users", require("./routes/userRoutes"));        // Register + login + CRUD
-app.use("/confirm", require("./routes/confirmRoutes"));  // Email verification
-app.use("/api", require("./routes/petRoutes"));          // Pets and related data
-app.use("/api", require("./routes/imgLocRoutes"));       // Local image upload
-// Serve static images for notifications
-app.use("/images", express.static(path.join(__dirname, "client/public/images")));
-app.use("/api", require("./routes/pushRoutes"));         // Push subscriptions
-app.use("/posts", require("./routes/postRoutes"));       // Community Feed
+// Health check for Render
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "OK",
+    message: "Virtual Pet Care API is running",
+  });
+});
+
+// Backend home route
+app.get("/", (req, res) => {
+  if (process.env.NODE_ENV === "production") {
+    return res.sendFile(
+      path.join(__dirname, "client", "build", "index.html")
+    );
+  }
+
+  res.status(200).json({
+    message: "Virtual Pet Care Backend is running!",
+  });
+});
+
+// Application routes
+app.use("/users", require("./routes/userRoutes"));
+app.use("/confirm", require("./routes/confirmRoutes"));
+app.use("/api", require("./routes/petRoutes"));
+app.use("/api", require("./routes/imgLocRoutes"));
+
+app.use(
+  "/images",
+  express.static(path.join(__dirname, "client/public/images"))
+);
+
+app.use("/api", require("./routes/pushRoutes"));
+app.use("/posts", require("./routes/postRoutes"));
 app.use("/chats", require("./routes/chatRoutes"));
 
-// Start Scheduler
-const { startScheduler } = require("./cron/scheduler");
-startScheduler();
-
-// Serve frontend in production
 if (process.env.NODE_ENV === "production") {
-  app.use(express.static(path.join(__dirname, "client", "build")));
-  app.get("*", (req, res) => {
-    res.sendFile(path.join(__dirname, "client", "build", "index.html"));
-  });
-} else {
-  app.get("/", (req, res) => {
-    res.send("Backend is running!");
+  const clientBuildPath = path.join(__dirname, "client", "build");
+  app.use(express.static(clientBuildPath));
+  app.get("*", (req, res, next) => {
+    const apiPrefixes = [
+      "/users",
+      "/confirm",
+      "/api",
+      "/posts",
+      "/chats",
+      "/health",
+      "/images",
+    ];
+
+    if (
+      apiPrefixes.some(
+        (prefix) => req.path === prefix || req.path.startsWith(`${prefix}/`)
+      )
+    ) {
+      return next();
+    }
+
+    res.sendFile(path.join(clientBuildPath, "index.html"));
   });
 }
 
-// Socket.io setup
+// Socket.IO server
 const server = http.createServer(app);
+
 const io = socketIo(server, {
-  cors: { origin: allowedOrigins }
+  cors: {
+    origin: allowedOrigins,
+    credentials: true,
+  },
 });
 
-const Chat = require("./models/chatModel");
-
+// Socket.IO connection
 io.on("connection", (socket) => {
-  console.log("Connected to socket.io:", socket.id);
+  console.log("Connected to Socket.IO:", socket.id);
 
   socket.on("setup", (userData) => {
-    socket.join(userData.id);
+    if (!userData || !userData.id) return;
+
+    socket.join(String(userData.id));
     socket.emit("connected");
   });
 
   socket.on("join_room", (roomId) => {
-    socket.join(roomId);
+    if (!roomId) return;
+
+    socket.join(String(roomId));
     console.log(`User ${socket.id} joined room ${roomId}`);
   });
 
   socket.on("send_message", async (data) => {
-    // data: { roomId, senderId, text }
-    console.log("Message received:", data);
+    if (!data) return;
+
     const { roomId, senderId, text } = data;
 
-    // Save to DB
+    if (!roomId || !senderId || !text) return;
+
     try {
-      const chat = await Chat.findById(roomId);
-      if (chat) {
-        const newMessage = {
-          sender: senderId,
-          text,
-          createdAt: new Date()
-        };
-        chat.messages.push(newMessage);
-        chat.lastMessage = text;
-        chat.lastMessageDate = new Date();
+      const chat = await Chat.findByPk(roomId);
 
-        // Unread Count Logic
-        if (!chat.unreadCounts) chat.unreadCounts = new Map();
+      if (!chat) return;
 
-        chat.participants.forEach(userId => {
-          if (userId.toString() !== senderId) {
-            // Increment unread for others
-            const current = chat.unreadCounts.get(userId.toString()) || 0;
-            chat.unreadCounts.set(userId.toString(), current + 1);
+      // Save message
+      const newMessage = await ChatMessage.create({
+        chatId: roomId,
+        senderId,
+        text,
+      });
 
-            // Emit Notification to their personal room
-            io.to(userId.toString()).emit("notification", {
+      // Update latest chat message
+      await chat.update({
+        lastMessage: text,
+        lastMessageDate: new Date(),
+      });
+
+      // Find chat participants
+      const participants = await ChatParticipant.findAll({
+        where: { chatId: roomId },
+      });
+
+      // Update unread counts and notify other participants
+      for (const cp of participants) {
+        if (String(cp.userId) !== String(senderId)) {
+          const existing = await ChatUnreadCount.findOne({
+            where: {
               chatId: roomId,
-              senderId: senderId,
-              text: text
+              userId: String(cp.userId),
+            },
+          });
+
+          if (existing) {
+            await existing.update({
+              count: existing.count + 1,
+            });
+          } else {
+            await ChatUnreadCount.create({
+              chatId: roomId,
+              userId: String(cp.userId),
+              count: 1,
             });
           }
-        });
 
-        await chat.save();
-
-        // Broadcast to Chat Room
-        io.to(roomId).emit("receive_message", newMessage);
+          io.to(String(cp.userId)).emit("notification", {
+            chatId: roomId,
+            senderId,
+            text,
+          });
+        }
       }
+
+      // Broadcast message to chat room
+      io.to(String(roomId)).emit("receive_message", {
+        id: newMessage.id,
+        _id: newMessage.id,
+        chatId: roomId,
+        senderId,
+        text,
+        createdAt: newMessage.createdAt,
+      });
     } catch (err) {
-      console.error("Socket Error:", err);
+      console.error("Socket message error:", err);
     }
   });
 
   socket.on("disconnect", () => {
-    console.log("User Disconnected", socket.id);
+    console.log("User disconnected:", socket.id);
   });
 });
 
-// Start server
-// Start server
-server.listen(PORT, () => console.log(`Backend running at http://localhost:${PORT}`));
+// Connect to TiDB and start backend
+async function startServer() {
+  try {
+    await sequelize.authenticate();
+
+    console.log("MySQL connection established.");
+
+    // Create missing tables without altering existing tables
+    await sequelize.sync();
+
+    console.log("Database synchronization completed.");
+
+    // Start scheduled tasks after database connection
+    const { startScheduler } = require("./cron/scheduler");
+    startScheduler();
+
+    // Start Express and Socket.IO
+    server.listen(PORT, "0.0.0.0", () => {
+      console.log(`Backend running on port ${PORT}`);
+    });
+  } catch (err) {
+    console.error("Backend startup error:", err);
+    process.exit(1);
+  }
+}
+
+startServer();

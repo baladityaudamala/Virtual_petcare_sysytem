@@ -9,7 +9,7 @@ module.exports = {
 				res.status(500);
 				return next(err);
 			}
-			res.send({ fileUrl: "./images/" + req.file.filename });
+			res.send({ fileUrl: "/images/" + req.file.filename });
 		} catch (err) {
 			(err) => res.send({ msg: err });
 		}

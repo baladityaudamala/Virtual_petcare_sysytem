@@ -13,7 +13,7 @@ const ForgotPassword = () => {
         e.preventDefault();
         setLoading(true);
         try {
-            await axios.post("/users/forgot-password", { email });
+            await axios.post("/users/forgot-password", { email }); 
             toast.success("If an account exists, a reset link has been sent.");
             setEmail("");
         } catch (err) {
